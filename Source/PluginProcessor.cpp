@@ -23,12 +23,85 @@ FileIoAudioProcessor::FileIoAudioProcessor()
                      #endif
                        )
 	//, writeThread("write thread")
+	//, tracker(false)
+	, fileLoaded(false)
+	, bufferPosition(0)
 #endif
 {
+
 }
 
 FileIoAudioProcessor::~FileIoAudioProcessor()
 {
+}
+
+void FileIoAudioProcessor::readFile()
+{
+	AudioFormatManager format;
+	format.registerBasicFormats();
+
+	FileChooser chooser("Select a Wav file to play", {}, "*.wav");
+
+	if (chooser.browseForFileToOpen()) {
+		auto file = chooser.getResult();
+		std::unique_ptr<AudioFormatReader> reader(format.createReaderFor(file));
+
+		if (reader.get() != nullptr) {
+			fileBuffer.setSize(reader->numChannels, (int)reader->lengthInSamples);
+			reader->read(&fileBuffer, 0, (int)reader->lengthInSamples, 0, true, true);
+		}
+	}
+
+	fileLoaded = true;
+}
+
+void FileIoAudioProcessor::writeFile()
+{
+	File file(File::getSpecialLocation(File::SpecialLocationType::userDesktopDirectory).getChildFile("testBuffer.wav"));
+	auto fileStream = file.createOutputStream();
+	fileStream->setPosition(0);
+	fileStream->truncate();
+
+	AudioBuffer<float> testBuffer(2, 480000);
+	testBuffer.clear();
+
+	WavAudioFormat format;
+	std::unique_ptr<AudioFormatWriter> writer;
+	writer.reset(format.createWriterFor(fileStream, 48000, testBuffer.getNumChannels(), 24, {}, 0));
+
+	if (writer != nullptr) {
+		writer->writeFromAudioSampleBuffer(testBuffer, 0, testBuffer.getNumSamples());
+	}
+}
+
+void FileIoAudioProcessor::playFile(AudioBuffer<float>& bufferToFill)
+{
+	auto totalNumInputChannels = getTotalNumInputChannels();
+	auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+	auto outputSamplesRemaining = bufferToFill.getNumSamples();
+	auto outputSampleOffset = 0;
+
+	while (outputSamplesRemaining > 0)
+	{
+		auto bufferSamplesRemaining = fileBuffer.getNumSamples() - bufferPosition;
+		auto samplesToCopy = jmin(outputSamplesRemaining, bufferSamplesRemaining);
+
+		for (int channel = 0; channel < totalNumInputChannels; ++channel)
+		{
+			auto* channelData = bufferToFill.getWritePointer(channel);
+
+			bufferToFill.copyFrom(channel, outputSampleOffset, fileBuffer, channel, bufferPosition, samplesToCopy);
+		}
+
+		outputSamplesRemaining -= samplesToCopy;
+		outputSampleOffset += samplesToCopy;
+		bufferPosition += samplesToCopy;
+
+		if (bufferPosition == fileBuffer.getNumSamples()) {
+			bufferPosition = 0;
+		}
+	}
 }
 
 //==============================================================================
@@ -117,20 +190,6 @@ void FileIoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 	}*/
 }
 
-void FileIoAudioProcessor::writeFile()
-{
-	File file("C:\Users\minut\Documents\testBuffer.wav");
-	AudioBuffer<float> testBuffer(2, systemSampleRate * 3.0f);
-	WavAudioFormat format;
-	std::unique_ptr<AudioFormatWriter> writer;
-	writer.reset(format.createWriterFor(new FileOutputStream(file), systemSampleRate, testBuffer.getNumChannels(), 24, {}, 0));
-
-	// file writing
-	if (writer != nullptr) {
-		writer->writeFromAudioSampleBuffer(testBuffer, 0, testBuffer.getNumSamples());
-	}
-}
-
 void FileIoAudioProcessor::releaseResources()
 {
     // When playback stops, you can use this as an opportunity to free up any
@@ -161,35 +220,18 @@ bool FileIoAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 }
 #endif
 
-void FileIoAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
+void FileIoAudioProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
 {
-    ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+	ScopedNoDenormals noDenormals;
+	auto totalNumInputChannels = getTotalNumInputChannels();
+	auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+	for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+		buffer.clear(i, 0, buffer.getNumSamples());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
-    {
-        auto* channelData = buffer.getWritePointer (channel);
-
-        // ..do something to the data...
-    }
-
-	writeFile();
+	if (fileLoaded == true) {
+		playFile(buffer);
+	}
 }
 
 //==============================================================================

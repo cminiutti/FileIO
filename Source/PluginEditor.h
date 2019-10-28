@@ -31,5 +31,8 @@ private:
     // access the processor object that created it.
     FileIoAudioProcessor& processor;
 
+	TextButton readButton;
+	TextButton writeButton;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FileIoAudioProcessorEditor)
 };

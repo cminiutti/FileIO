@@ -55,11 +55,17 @@ public:
     void getStateInformation (MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+	void readFile();
 	void writeFile();
+	void playFile(AudioBuffer<float>& bufferToFill);
 
 private:
+	AudioSampleBuffer fileBuffer;
+
 	//TimeSliceThread writeThread;
 	float systemSampleRate;
+	bool fileLoaded;
+	int bufferPosition;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FileIoAudioProcessor)
