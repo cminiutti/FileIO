@@ -11,6 +11,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+static const int maxRecordTime = 60 * 3;	// max record time of 3 minutes
+
 //==============================================================================
 FileIoAudioProcessor::FileIoAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -22,10 +24,12 @@ FileIoAudioProcessor::FileIoAudioProcessor()
                        .withOutput ("Output", AudioChannelSet::stereo(), true)
                      #endif
                        )
-	//, writeThread("write thread")
-	//, tracker(false)
+	, recordBuffer(2, 48000 * maxRecordTime)		// POSSIBLE ISSUE: Hardcoded sample rate
 	, fileLoaded(false)
-	, bufferPosition(0)
+	, fileBufferPosition(0)
+	, recording(false)
+	, recBufferPosition(0)
+	, recSampleCount(0)
 #endif
 {
 
@@ -62,12 +66,12 @@ void FileIoAudioProcessor::writeFile()
 	fileStream->setPosition(0);
 	fileStream->truncate();
 
-	AudioBuffer<float> testBuffer(2, 480000);
+	AudioBuffer<float> testBuffer(2, systemSampleRate * 10.0f);
 	testBuffer.clear();
 
 	WavAudioFormat format;
 	std::unique_ptr<AudioFormatWriter> writer;
-	writer.reset(format.createWriterFor(fileStream, 48000, testBuffer.getNumChannels(), 24, {}, 0));
+	writer.reset(format.createWriterFor(fileStream, systemSampleRate, testBuffer.getNumChannels(), 24, {}, 0));
 
 	if (writer != nullptr) {
 		writer->writeFromAudioSampleBuffer(testBuffer, 0, testBuffer.getNumSamples());
@@ -84,22 +88,74 @@ void FileIoAudioProcessor::playFile(AudioBuffer<float>& bufferToFill)
 
 	while (outputSamplesRemaining > 0)
 	{
-		auto bufferSamplesRemaining = fileBuffer.getNumSamples() - bufferPosition;
+		auto bufferSamplesRemaining = fileBuffer.getNumSamples() - fileBufferPosition;
 		auto samplesToCopy = jmin(outputSamplesRemaining, bufferSamplesRemaining);
 
 		for (int channel = 0; channel < totalNumInputChannels; ++channel)
 		{
 			auto* channelData = bufferToFill.getWritePointer(channel);
 
-			bufferToFill.copyFrom(channel, outputSampleOffset, fileBuffer, channel, bufferPosition, samplesToCopy);
+			bufferToFill.copyFrom(channel, outputSampleOffset, fileBuffer, channel, fileBufferPosition, samplesToCopy);
 		}
 
 		outputSamplesRemaining -= samplesToCopy;
 		outputSampleOffset += samplesToCopy;
-		bufferPosition += samplesToCopy;
+		fileBufferPosition += samplesToCopy;
 
-		if (bufferPosition == fileBuffer.getNumSamples()) {
-			bufferPosition = 0;
+		// loop
+		if (fileBufferPosition == fileBuffer.getNumSamples()) {
+			fileBufferPosition = 0;
+		}
+	}
+}
+
+void FileIoAudioProcessor::startRecording()
+{
+	recBufferPosition = 0;
+	recSampleCount = 0;
+
+	recordBuffer.clear();
+}
+
+void FileIoAudioProcessor::record(AudioBuffer<float>& bufferToFill)
+{
+	auto totalNumInputChannels = getTotalNumInputChannels();
+	auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+	for (int channel = 0; channel < totalNumInputChannels; ++channel)
+	{
+		auto* channelData = bufferToFill.getWritePointer(channel);
+
+		recordBuffer.copyFrom(channel, recBufferPosition, bufferToFill, channel, 0, bufferToFill.getNumSamples());
+	}
+
+	recBufferPosition += bufferToFill.getNumSamples();
+	recSampleCount += bufferToFill.getNumSamples();
+
+	// wrap around if max length is reached
+	if (recBufferPosition >= (48000 * maxRecordTime)) {
+		recBufferPosition = 0;
+	}
+}
+
+void FileIoAudioProcessor::exportRecording()
+{
+	if (recording == false) {
+		AudioSampleBuffer exportBuffer(recordBuffer);
+		int samplesToChop = exportBuffer.getNumSamples() - recSampleCount;
+		exportBuffer.setSize(exportBuffer.getNumChannels(), exportBuffer.getNumSamples() - samplesToChop, true, true);
+
+		File file(File::getSpecialLocation(File::SpecialLocationType::userDesktopDirectory).getChildFile("recording.wav"));
+		auto fileStream = file.createOutputStream();
+		fileStream->setPosition(0);
+		fileStream->truncate();
+
+		WavAudioFormat format;
+		std::unique_ptr<AudioFormatWriter> writer;
+		writer.reset(format.createWriterFor(fileStream, systemSampleRate, exportBuffer.getNumChannels(), 24, {}, 0));
+
+		if (writer != nullptr) {
+			writer->writeFromAudioSampleBuffer(exportBuffer, 0, exportBuffer.getNumSamples());
 		}
 	}
 }
@@ -170,24 +226,6 @@ void FileIoAudioProcessor::changeProgramName (int index, const String& newName)
 void FileIoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
 	systemSampleRate = sampleRate;
-
-	/*// pre-made buffer stuff
-	AudioBuffer<float> testBuffer(2, sampleRate * 3.0f);
-
-	// threaded stuff/necessary stuff
-	//writeThread.startThread();
-	//FileOutputStream* stream = new FileOutputStream(File::getSpecialLocation(File::userHomeDirectory()).getChildFile("testBuffer.wav"));
-	File outputFile = File("C:\testBuffer.wav");
-	FileOutputStream* outputStream = outputFile.createOutputStream();
-	WavAudioFormat format;
-	std::unique_ptr<AudioFormatWriter> writer;
-	writer.reset(format.createWriterFor(outputStream, sampleRate, testBuffer.getNumChannels(), 24, {}, 0));
-	//AudioFormatWriter::ThreadedWriter* threaded = new AudioFormatWriter::ThreadedWriter(writer, writeThread, 16384);
-
-	// file writing
-	if (writer != nullptr) {
-		writer->writeFromAudioSampleBuffer(testBuffer, 0, testBuffer.getNumSamples());
-	}*/
 }
 
 void FileIoAudioProcessor::releaseResources()
@@ -229,7 +267,11 @@ void FileIoAudioProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& 
 	for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
 		buffer.clear(i, 0, buffer.getNumSamples());
 
-	if (fileLoaded == true) {
+	if (recording == true) {
+		record(buffer);
+	}
+
+	if (fileLoaded == true && recording == false) {
 		playFile(buffer);
 	}
 }

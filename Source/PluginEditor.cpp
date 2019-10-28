@@ -26,6 +26,23 @@ FileIoAudioProcessorEditor::FileIoAudioProcessorEditor (FileIoAudioProcessor& p)
 	writeButton.setButtonText("Write");
 	writeButton.onClick = [this] {processor.writeFile(); };
 	addAndMakeVisible(&writeButton);
+
+	recordButton.setButtonText("Record");
+	recordButton.onClick = [this] 
+	{
+		if (processor.recording == false) {
+			processor.startRecording();
+			processor.recording = true;
+		}
+		else {
+			processor.recording = false;
+		} 
+	};
+	addAndMakeVisible(&recordButton);
+
+	exportButton.setButtonText("Export");
+	exportButton.onClick = [this] {processor.exportRecording(); };
+	addAndMakeVisible(&exportButton);
 }
 
 FileIoAudioProcessorEditor::~FileIoAudioProcessorEditor()
@@ -49,5 +66,7 @@ void FileIoAudioProcessorEditor::resized()
     // subcomponents in your editor..
 
 	readButton.setBounds(100, 100, 200, 50);
-	writeButton.setBounds(100, 250, 200, 50);
+	writeButton.setBounds(100, 200, 200, 50);
+	recordButton.setBounds(75, 300, 100, 50);
+	exportButton.setBounds(225, 300, 100, 50);
 }

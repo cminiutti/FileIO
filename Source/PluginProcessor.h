@@ -59,13 +59,21 @@ public:
 	void writeFile();
 	void playFile(AudioBuffer<float>& bufferToFill);
 
+	void record(AudioBuffer<float>& bufferToFill);
+	void startRecording();
+	void exportRecording();
+	bool recording;
+
 private:
 	AudioSampleBuffer fileBuffer;
+	AudioSampleBuffer recordBuffer;
 
-	//TimeSliceThread writeThread;
 	float systemSampleRate;
 	bool fileLoaded;
-	int bufferPosition;
+	int fileBufferPosition;
+
+	int recBufferPosition;
+	int recSampleCount;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FileIoAudioProcessor)

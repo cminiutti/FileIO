@@ -33,6 +33,8 @@ private:
 
 	TextButton readButton;
 	TextButton writeButton;
+	TextButton recordButton;
+	TextButton exportButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FileIoAudioProcessorEditor)
 };
